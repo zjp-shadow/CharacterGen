@@ -1,0 +1,4 @@
+torch
+torchvision
+xformers
+diffusers==0.24.0
