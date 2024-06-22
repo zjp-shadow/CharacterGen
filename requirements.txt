@@ -1,4 +1,18 @@
+gradio
+rm_anime_bg
+# for 2D_stage
 torch
 torchvision
 xformers
 diffusers==0.24.0
+# for 3D_stage
+pytorch_lightning
+jaxtyping
+wandb
+lpips
+git+https://github.com/NVlabs/nvdiffrast
+ninja
+open3d
+trimesh
+pymeshlab
+pygltflib
