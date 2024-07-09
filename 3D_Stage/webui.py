@@ -10,6 +10,7 @@ from datetime import datetime
 import gradio as gr
 from pygltflib import GLTF2
 from PIL import Image
+from huggingface_hub import hf_hub_download
 
 from refine import refine
 
@@ -18,6 +19,17 @@ device = "cuda"
 import trimesh
 import pymeshlab
 import numpy as np
+
+from huggingface_hub import hf_hub_download, list_repo_files
+
+repo_id = "zjpshadow/CharacterGen"
+all_files = list_repo_files(repo_id, revision="main")
+
+for file in all_files:
+    if os.path.exists("../" + file):
+        continue
+    if file.startswith("3D_Stage"):
+        hf_hub_download(repo_id, file, local_dir="../")
 
 def traverse(path, back_proj):
     mesh = trimesh.load(f"{path}/model-00.obj")

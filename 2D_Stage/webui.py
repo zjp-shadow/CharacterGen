@@ -38,6 +38,17 @@ import onnxruntime as rt
 from huggingface_hub.file_download import hf_hub_download
 from rm_anime_bg.cli import get_mask, SCALE
 
+from huggingface_hub import hf_hub_download, list_repo_files
+
+repo_id = "zjpshadow/CharacterGen"
+all_files = list_repo_files(repo_id, revision="main")
+
+for file in all_files:
+    if os.path.exists("../" + file):
+        continue
+    if file.startswith("2D_Stage"):
+        hf_hub_download(repo_id, file, local_dir="../")
+
 class rm_bg_api:
 
     def __init__(self, force_cpu: Optional[bool] = True):
