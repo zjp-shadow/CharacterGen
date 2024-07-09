@@ -4,6 +4,8 @@ rm_anime_bg
 torch
 torchvision
 xformers
+accelerate
+transformers
 diffusers==0.24.0
 # for 3D_stage
 pytorch_lightning
