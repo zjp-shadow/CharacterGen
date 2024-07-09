@@ -7,6 +7,11 @@ xformers
 accelerate
 transformers
 diffusers==0.24.0
+ipdb
+einops
+omegaconf
+imageio
+onnxruntime
 # for 3D_stage
 pytorch_lightning
 jaxtyping
