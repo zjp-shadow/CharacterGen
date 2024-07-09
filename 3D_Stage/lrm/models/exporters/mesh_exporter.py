@@ -213,6 +213,7 @@ class MeshExporter(Exporter):
             with time_recorder_enabled():
                 textures = self.get_texture_maps(scene_code, mesh)
                 params.update(textures)
+        os.makedirs(self.cfg.output_path, exist_ok=True)
         np.savez(f"{self.cfg.output_path}/tex_info.npz", v_tex=mesh.v_tex.cpu().numpy(), t_tex_idx=mesh.t_tex_idx.cpu().numpy())
         return ExporterOutput(
             save_name=f"{self.cfg.save_name}-{name}.{fmt}", save_type=fmt, params=params
