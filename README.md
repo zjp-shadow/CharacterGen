@@ -1,6 +1,6 @@
 # CharacterGen: Efficient 3D Character Generation from Single Images with Multi-View Pose Calibration
 
-This is the official codebase of SIGGRAPH'24 (TOG) [CharacterGen](https://charactergen.github.io/).
+This is the codebase of SIGGRAPH'24 (TOG) [CharacterGen](https://charactergen.github.io/).
 
 ![teaser](./materials/teaser.png)
 
@@ -12,10 +12,8 @@ This is the official codebase of SIGGRAPH'24 (TOG) [CharacterGen](https://charac
 
 ### 1. Prepare environment
 
+Use `python3.9` and then
 `pip install -r requirements.txt`
-
-### 2. Download the weight
-
 
 ### 2. Run the script
 
