@@ -16,7 +16,17 @@ This is the official codebase of SIGGRAPH'24 (TOG) [CharacterGen](https://charac
 
 ### 2. Download the weight
 
-Install `huggingface-cli` first.
+
+### 2. Run the script
+
+#### Run the whole pipeline
+
+```bash
+python webui.py
+```
+
+This script will download the weight automatically. 
+You can also use `huggingface-cli` to download the weight manually.
 
 ```bash
 huggingface-cli download --resume-download zjpshadow/CharacterGen --include 2D_Stage/* --local-dir .
@@ -24,13 +34,6 @@ huggingface-cli download --resume-download zjpshadow/CharacterGen --include 3D_S
 ```
 
 If you find mistakes on download, you can download all the reporitory and move to the right folder.
-
-### 3. Run the script
-
-#### Run the whole pipeline
-```bash
-python webui.py
-```
 
 #### Only Run 2D Stage
 

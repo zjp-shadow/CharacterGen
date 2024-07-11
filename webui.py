@@ -63,7 +63,7 @@ for file in all_files:
 
 class rm_bg_api:
 
-    def __init__(self, force_cpu: Optional[bool] = True):
+    def __init__(self, force_cpu: Optional[bool] = False):
         session_infer_path = hf_hub_download(
             repo_id="skytnt/anime-seg", filename="isnetis.onnx",
         )
@@ -273,21 +273,24 @@ class Inference2D_API:
         torch.cuda.empty_cache()
         return image_outputs 
 
-
 def traverse(path, back_proj, smooth_iter):
-    mesh = trimesh.load(f"{path}/model-00.obj")
+    ms = pymeshlab.MeshSet()
+    ms.load_new_mesh(f"{path}/model-00.obj")
+    image = Image.open(f"{path}/{'refined_texture_kd.jpg' if back_proj else 'texture_kd.jpg'}")
+    out_image_path = f"{path}/{'refined_texture_kd.png' if back_proj else 'texture_kd.png'}"
+    image.save(out_image_path, 'PNG')
+    ms.set_texture_per_mesh(textname=f"{path}/{'refined_texture_kd.png' if back_proj else 'texture_kd.png'}")
+    ms.meshing_merge_close_vertices()
+    ms.apply_coord_laplacian_smoothing(stepsmoothnum=smooth_iter)
+    ms.save_current_mesh(f"{path}/temp-00.obj", save_vertex_normal=False, save_wedge_normal=False, save_vertex_color=False)
+
+    mesh = trimesh.load(f"{path}/temp-00.obj", process=False)
     mesh.apply_transform(trimesh.transformations.rotation_matrix(np.radians(90.0), [-1, 0, 0]))
     mesh.apply_transform(trimesh.transformations.rotation_matrix(np.radians(180.0), [0, 1, 0]))
 
-    cmesh = pymeshlab.Mesh(mesh.vertices, mesh.faces)
-    ms = pymeshlab.MeshSet()
-    ms.add_mesh(cmesh)
-    ms.apply_coord_laplacian_smoothing(stepsmoothnum=smooth_iter)
-    mesh.vertices = ms.current_mesh().vertex_matrix()
-
     mesh.export(f'{path}/output.glb', file_type='glb')
 
-    image = Image.open(f"{path}/{'refined_texture_kd.jpg' if back_proj else 'texture_kd.jpg'}")
+    image = Image.open(f"{path}/{'refined_texture_kd.png' if back_proj else 'texture_kd.png'}")
     texture = np.array(image)
     vertex_colors = np.zeros((mesh.vertices.shape[0], 4), dtype=np.uint8)
 
@@ -298,7 +301,7 @@ def traverse(path, back_proj, smooth_iter):
 
         color = texture[y, x, :3]
         vertex_colors[vertex_index] = [color[0], color[1], color[2], 255]
-    return trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces, vertex_colors=vertex_colors)
+    return trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces, vertex_colors=vertex_colors, process=False)
 
 class Inference3D_API:
 
