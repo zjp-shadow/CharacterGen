@@ -52,6 +52,24 @@ import pymeshlab
 
 from huggingface_hub import hf_hub_download, list_repo_files
 
+#7-23-2024 Changed to allow GPU with compute < 8
+device_capability = -1
+
+#bfloat Support is typically 8 or higher.
+def check_bfloat16_support():
+   # Check if bfloat16 is supported
+   device_capability = torch.cuda.get_device_capability()
+
+   if device_capability[0] >= 8:
+      print("CUDA device capability is above 8, using bfloat16.")
+      return torch.bfloat16
+   else:
+      print("CUDA device capability is below 8, using float 32.")
+      return torch.float32
+
+#7-23-2024 Changed to allow GPU with compute < 8
+data_type_float = check_bfloat16_support()
+
 repo_id = "zjpshadow/CharacterGen"
 all_files = list_repo_files(repo_id, revision="main")
 
@@ -248,7 +266,7 @@ class Inference2D_API:
 
         # (B*Nv, 3, H, W)
         B = 1
-        weight_dtype = torch.bfloat16
+        weight_dtype =  data_type_float #7-23-2024 Changed to allow GPU with compute < 8
         imgs_in = process_image(input_image, totensor)
         imgs_in = rearrange(imgs_in.unsqueeze(0).unsqueeze(0), "B Nv C H W -> (B Nv) C H W")
                 
