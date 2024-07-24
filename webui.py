@@ -463,7 +463,7 @@ def main(
             inputs=[img_input0, img_input1, img_input2, img_input3, back_proj, smooth_iter],
             outputs=[output_dir, output_model_obj, output_model_glb]
         )
-    demo.launch(server_name="0.0.0.0", share=True)
+    demo.launch(server_name="0.0.0.0")
 
 if __name__ == "__main__":
     main()
