@@ -435,12 +435,12 @@ def main(
             with gr.Column(variant="panel"):
                 timestep = gr.Slider(minimum=10, maximum=70, step=1, value=40, label="Timesteps")
                 button1 = gr.Button(value="Generate 4 Views")
-                with gr.Row():
-                    img_input0 = gr.Image(type="pil", label="Left Image", image_mode="RGBA", width=256, height=384)
+      	    with gr.Row():
+                    img_input0 = gr.Image(type="pil", label="Back Image", image_mode="RGBA", width=256, height=384)
                     img_input1 = gr.Image(type="pil", label="Front Image", image_mode="RGBA", width=256, height=384)
                 with gr.Row():
                     img_input2 = gr.Image(type="pil", label="Right Image", image_mode="RGBA", width=256, height=384)
-                    img_input3 = gr.Image(type="pil", label="Back Image", image_mode="RGBA", width=256, height=384)
+                    img_input3 = gr.Image(type="pil", label="Left Image", image_mode="RGBA", width=256, height=384)
             with gr.Column(variant="panel"):
                 smooth_iter = gr.Slider(minimum=0, maximum=10, step=1, value=5, label="Laplacian Smoothing Iterations")
                 with gr.Row():
