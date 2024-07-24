@@ -397,7 +397,8 @@ class Inference3D_API:
 def main(
 ):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="./2D_Stage/configs/infer.yaml")
+    parser.add_argument("--config", type=str, default="./2D_Stage/configs/infer.yaml", help='Path to a config yaml file.')
+    parser.add_argument("--share", type=str, default="False", help='True/False value for sharing Gradio as a public URL.')
     args = parser.parse_args()
 
     infer2dapi = Inference2D_API(**OmegaConf.load(args.config))
@@ -435,11 +436,11 @@ def main(
                 timestep = gr.Slider(minimum=10, maximum=70, step=1, value=40, label="Timesteps")
                 button1 = gr.Button(value="Generate 4 Views")
                 with gr.Row():
-                    img_input0 = gr.Image(type="pil", label="Back Image", image_mode="RGBA", width=256, height=384)
+                    img_input0 = gr.Image(type="pil", label="Left Image", image_mode="RGBA", width=256, height=384)
                     img_input1 = gr.Image(type="pil", label="Front Image", image_mode="RGBA", width=256, height=384)
                 with gr.Row():
                     img_input2 = gr.Image(type="pil", label="Right Image", image_mode="RGBA", width=256, height=384)
-                    img_input3 = gr.Image(type="pil", label="Left Image", image_mode="RGBA", width=256, height=384)
+                    img_input3 = gr.Image(type="pil", label="Back Image", image_mode="RGBA", width=256, height=384)
             with gr.Column(variant="panel"):
                 smooth_iter = gr.Slider(minimum=0, maximum=10, step=1, value=5, label="Laplacian Smoothing Iterations")
                 with gr.Row():
@@ -463,7 +464,7 @@ def main(
             inputs=[img_input0, img_input1, img_input2, img_input3, back_proj, smooth_iter],
             outputs=[output_dir, output_model_obj, output_model_glb]
         )
-    demo.launch(server_name="0.0.0.0")
+    demo.launch(server_name="0.0.0.0", share={args.share})
 
 if __name__ == "__main__":
     main()
