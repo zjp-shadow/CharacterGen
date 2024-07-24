@@ -121,7 +121,10 @@ check_min_version("0.24.0")
 
 logger = get_logger(__name__, log_level="INFO")
 
+#7/24/2024 - Add creating a random seed if we pass -1.
 def set_seed(seed):
+    if seed == -1:
+        seed = random.randint(0, 2**32 - 1)  # Generate a random seed
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
