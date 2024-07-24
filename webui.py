@@ -266,7 +266,7 @@ class Inference2D_API:
 
         # (B*Nv, 3, H, W)
         B = 1
-        weight_dtype =  data_type_float #7-23-2024 Changed to allow GPU with compute < 8
+        weight_dtype = data_type_float #7-23-2024 Changed to allow GPU with compute < 8
         imgs_in = process_image(input_image, totensor)
         imgs_in = rearrange(imgs_in.unsqueeze(0).unsqueeze(0), "B Nv C H W -> (B Nv) C H W")
                 
