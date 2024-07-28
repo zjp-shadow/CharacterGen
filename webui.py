@@ -121,7 +121,10 @@ check_min_version("0.24.0")
 
 logger = get_logger(__name__, log_level="INFO")
 
+#7/24/2024 - Add creating a random seed if we pass -1.
 def set_seed(seed):
+    if seed == -1:
+        seed = random.randint(0, 2**32 - 1)  # Generate a random seed
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -266,7 +269,7 @@ class Inference2D_API:
 
         # (B*Nv, 3, H, W)
         B = 1
-        weight_dtype =  data_type_float #7-23-2024 Changed to allow GPU with compute < 8
+        weight_dtype = data_type_float #7-23-2024 Changed to allow GPU with compute < 8
         imgs_in = process_image(input_image, totensor)
         imgs_in = rearrange(imgs_in.unsqueeze(0).unsqueeze(0), "B Nv C H W -> (B Nv) C H W")
                 
@@ -397,7 +400,8 @@ class Inference3D_API:
 def main(
 ):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="./2D_Stage/configs/infer.yaml")
+    parser.add_argument("--config", type=str, default="./2D_Stage/configs/infer.yaml", help='Path to a config yaml file.')
+    parser.add_argument("--share", type=str, default="False", help='True/False value for sharing Gradio as a public URL.')
     args = parser.parse_args()
 
     infer2dapi = Inference2D_API(**OmegaConf.load(args.config))
@@ -434,10 +438,10 @@ def main(
             with gr.Column(variant="panel"):
                 timestep = gr.Slider(minimum=10, maximum=70, step=1, value=40, label="Timesteps")
                 button1 = gr.Button(value="Generate 4 Views")
-                with gr.Row():
+            with gr.Row():
                     img_input0 = gr.Image(type="pil", label="Back Image", image_mode="RGBA", width=256, height=384)
                     img_input1 = gr.Image(type="pil", label="Front Image", image_mode="RGBA", width=256, height=384)
-                with gr.Row():
+            with gr.Row():
                     img_input2 = gr.Image(type="pil", label="Right Image", image_mode="RGBA", width=256, height=384)
                     img_input3 = gr.Image(type="pil", label="Left Image", image_mode="RGBA", width=256, height=384)
             with gr.Column(variant="panel"):
@@ -463,7 +467,7 @@ def main(
             inputs=[img_input0, img_input1, img_input2, img_input3, back_proj, smooth_iter],
             outputs=[output_dir, output_model_obj, output_model_glb]
         )
-    demo.launch(server_name="0.0.0.0")
+    demo.launch(server_name="0.0.0.0", share={args.share})
 
 if __name__ == "__main__":
     main()
