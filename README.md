@@ -1,5 +1,7 @@
 # CharacterGen: Efficient 3D Character Generation from Single Images with Multi-View Pose Calibration
 
+<a href="https://huggingface.co/spaces/VAST-AI/CharacterGen"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Gradio%20Demo-Huggingface-orange"></a>
+
 This is the codebase of SIGGRAPH'24 (TOG) [CharacterGen](https://charactergen.github.io/).
 
 ![teaser](./materials/teaser.png)
