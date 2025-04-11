@@ -4,7 +4,7 @@
 
 This is the codebase of SIGGRAPH'24 (TOG) [CharacterGen](https://charactergen.github.io/).
 
-**We open-source a new work for auto-rigging [UniRig](https://github.com/vast-enterprise/UniRig-lightning)!!**
+**We open-source a new work for auto-rigging [UniRig](https://github.com/VAST-AI-Research/UniRig)!!**
 
 ![teaser](./materials/teaser.png)
 
