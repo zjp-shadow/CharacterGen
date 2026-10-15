@@ -6,6 +6,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 
 import torch
+from runtime import get_device as inference_device
 from packaging import version
 
 import lrm
@@ -29,7 +30,9 @@ def get_rank():
 
 
 def get_device():
-    return torch.device(f"cuda:{get_rank()}")
+    if torch.cuda.is_available() and os.environ.get("CHARACTERGEN_DEVICE", "auto") in ("auto", "cuda"):
+        return torch.device(f"cuda:{get_rank()}")
+    return inference_device()
 
 
 def load_module_weights(
@@ -40,7 +43,7 @@ def load_module_weights(
     if map_location is None:
         map_location = get_device()
 
-    ckpt = torch.load(path, map_location=map_location)
+    ckpt = torch.load(path, map_location=map_location, mmap=True)
     state_dict = ckpt["state_dict"]
 
     if mapping is not None:
@@ -107,7 +110,8 @@ def C(value: Any, epoch: int, global_step: int) -> float:
 
 def cleanup():
     gc.collect()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     try:
         import tinycudann as tcnn
 
@@ -171,13 +175,15 @@ class TimeRecorder:
     def start(self, name: str) -> None:
         if not self.enabled:
             return
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         self.items[name] = time.time()
 
     def end(self, name: str, accumulate: bool = False) -> float:
         if not self.enabled or name not in self.items:
             return
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         start_time = self.items.pop(name)
         delta = time.time() - start_time
         if accumulate:

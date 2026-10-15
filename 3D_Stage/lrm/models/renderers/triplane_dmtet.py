@@ -5,6 +5,7 @@ from functools import partial
 
 import torch
 import torch.nn.functional as F
+from runtime import grid_sample
 from einops import rearrange, reduce
 
 import lrm
@@ -73,7 +74,7 @@ class TriplaneDMTetRenderer(BaseRenderer):
             (positions[..., [0, 1]], positions[..., [0, 2]], positions[..., [1, 2]]),
             dim=-3,
         )
-        out: Float[Tensor, "B3 Cp 1 N"] = F.grid_sample(
+        out: Float[Tensor, "B3 Cp 1 N"] = grid_sample(
             rearrange(triplanes, "B Np Cp Hp Wp -> (B Np) Cp Hp Wp", Np=3),
             rearrange(indices2D, "B Np N Nd -> (B Np) () N Nd", Np=3),
             align_corners=False,

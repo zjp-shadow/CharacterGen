@@ -644,7 +644,8 @@ class MVAttnProcessor:
         attention_mask=None,
         temb=None,
         num_views=1,
-        multiview_attention=True
+        multiview_attention=True,
+        cross_domain_attention=False,
     ):
         residual = hidden_states
 
@@ -722,8 +723,12 @@ class MVAttnProcessor:
         key = attn.head_to_batch_dim(key).contiguous()
         value = attn.head_to_batch_dim(value).contiguous()
         
-        attention_probs = attn.get_attention_scores(query, key, attention_mask)
-        hidden_states = torch.bmm(attention_probs, value)
+        from runtime import is_directml, sliced_attention
+        if is_directml(query.device):
+            hidden_states = sliced_attention(query, key, value, attention_mask, attn.scale)
+        else:
+            attention_probs = attn.get_attention_scores(query, key, attention_mask)
+            hidden_states = torch.bmm(attention_probs, value)
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
         # linear proj

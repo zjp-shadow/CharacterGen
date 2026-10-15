@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from runtime import is_directml
 
 import lrm
 from ..models.mesh import Mesh
@@ -257,6 +258,12 @@ class MarchingTetrahedraHelper(IsosurfaceHelper):
         else:
             grid_vertices = self.grid_vertices
 
+        if is_directml(level.device):
+            if torch.is_grad_enabled() and level.requires_grad:
+                raise RuntimeError("AMD surface extraction supports inference only.")
+            from gpu_raster import marching_tetrahedra
+            v_pos, t_pos_idx = marching_tetrahedra(grid_vertices, level, self.indices, self.triangle_table)
+            return Mesh(v_pos=v_pos, t_pos_idx=t_pos_idx)
         v_pos, t_pos_idx = self._forward(grid_vertices, level, self.indices)
 
         mesh = Mesh(

@@ -1,5 +1,9 @@
-import nvdiffrast.torch as dr
 import torch
+from runtime import get_device, is_directml
+if is_directml(get_device()):
+    import gpu_raster as dr
+else:
+    import nvdiffrast.torch as dr
 
 from .typing import *
 
@@ -47,7 +51,7 @@ class NVDiffRasterizerContext:
     ):
         # rasterize one single mesh under a single viewpoint
         rast, rast_db = self.rasterize(pos[None, ...], tri, resolution)
-        return rast[0], rast_db[0]
+        return rast[0], None if rast_db is None else rast_db[0]
 
     def antialias(
         self,

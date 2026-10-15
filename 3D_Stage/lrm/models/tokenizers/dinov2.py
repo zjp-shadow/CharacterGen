@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import torch
 import torch.utils.checkpoint
 from torch import nn
+from runtime import is_directml, sliced_attention
 import torch.nn.functional as F
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
@@ -47,7 +48,10 @@ from transformers.utils import (
 )
 from transformers.utils.backbone_utils import BackboneMixin
 from transformers.models.dinov2.configuration_dinov2 import Dinov2Config
-import xformers
+try:
+    import xformers.ops
+except ImportError:
+    xformers = None
 
 from ..transformers.attention import MemoryEfficientAttentionMixin
 from ...utils.typing import *
@@ -285,13 +289,18 @@ class Dinov2SelfAttention(nn.Module):
             key_layer = self.key(hidden_states).reshape(new_size).transpose(1, 2)
             value_layer = self.value(hidden_states).reshape(new_size).transpose(1, 2)
             query_layer = mixed_query_layer.reshape(new_size).transpose(1, 2)
-            context_layer = F.scaled_dot_product_attention(
-                query_layer,
-                key_layer,
-                value_layer,
-                dropout_p=self.attention_probs_dropout_prob,
-                is_causal=False,
-            )
+            if is_directml(query_layer.device):
+                shape = query_layer.shape
+                context_layer = sliced_attention(
+                    query_layer.reshape(-1, shape[-2], shape[-1]),
+                    key_layer.reshape(-1, shape[-2], shape[-1]),
+                    value_layer.reshape(-1, shape[-2], shape[-1]),
+                ).reshape(shape)
+            else:
+                context_layer = F.scaled_dot_product_attention(
+                    query_layer, key_layer, value_layer,
+                    dropout_p=self.attention_probs_dropout_prob, is_causal=False,
+                )
             context_layer = context_layer.transpose(1, 2).reshape(
                 *hidden_states.size()[:-1], -1
             )
