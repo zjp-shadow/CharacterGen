@@ -1193,6 +1193,7 @@ class UNetMV2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixi
         You should probably TRAIN this model on a down-stream task to be able to use it for predictions and inference.
         ```
         """
+        config_only = kwargs.pop("config_only", False)
         cache_dir = kwargs.pop("cache_dir", DIFFUSERS_CACHE)
         ignore_mismatched_sizes = kwargs.pop("ignore_mismatched_sizes", False)
         force_download = kwargs.pop("force_download", False)
@@ -1300,7 +1301,7 @@ class UNetMV2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixi
         if from_flax:
             raise NotImplementedError
         else:
-            if use_safetensors:
+            if use_safetensors and not config_only:
                 try:
                     model_file = _get_model_file(
                         pretrained_model_name_or_path,
@@ -1320,7 +1321,7 @@ class UNetMV2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixi
                     if not allow_pickle:
                         raise e
                     pass
-            if model_file is None:
+            if model_file is None and not config_only:
                 model_file = _get_model_file(
                     pretrained_model_name_or_path,
                     weights_name=_add_variant(WEIGHTS_NAME, variant),
@@ -1336,7 +1337,13 @@ class UNetMV2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixi
                     commit_hash=commit_hash,
                 )
 
-            model = cls.from_config(config, **unused_kwargs)
+            if config_only:
+                # The complete CharacterGen checkpoint replaces every base weight.
+                from accelerate import init_empty_weights
+                with init_empty_weights():
+                    model = cls.from_config(config, **unused_kwargs)
+            else:
+                model = cls.from_config(config, **unused_kwargs)
             if local_crossattn:
                 unet_lora_attn_procs = dict()
                 for name, _ in model.attn_processors.items():
@@ -1350,6 +1357,8 @@ class UNetMV2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixi
                         default_attn_proc, enabled=name.endswith("attn1.processor"), name=name
                     )
                 model.set_attn_processor(unet_lora_attn_procs)
+            if config_only:
+                return model.eval()
             state_dict = load_state_dict(model_file, variant=variant)
             model._convert_deprecated_attention_blocks(state_dict)
 

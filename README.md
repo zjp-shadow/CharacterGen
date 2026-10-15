@@ -14,6 +14,48 @@ This is the codebase of SIGGRAPH'24 (TOG) [CharacterGen](https://charactergen.gi
 
 ## Quick Start
 
+### Windows with AMD Radeon (DirectML)
+
+This fork includes an inference backend for the Radeon RX 6600. Use Python 3.10
+and the separate AMD requirements; the original requirements install CUDA-only
+extensions. From PowerShell in this directory:
+
+```powershell
+./install-amd.ps1
+./start-amd.ps1
+```
+
+The installer uses `uv`, creates `.venv`, and stores Python/download caches and
+model weights under `D:/Codex`. The UI listens on `http://127.0.0.1:7860`.
+Results go to `D:/Codex/outputs/CharacterGen`. Use the root UI for both stages.
+Models load when generating, with only one stage resident in VRAM at a time.
+The 2D stage also alternates its two UNets in VRAM on DirectML.
+Inactive weights can reside in host RAM; model calculations stay on the GPU.
+
+Neural inference uses DirectML. OpenGL compute shaders perform surface extraction
+and hardware rasterization; xformers and nvdiffrast are not required for AMD.
+Image/file handling, UV unwrapping, UV padding and mesh cleanup retain the original
+CPU code. This is an
+inference implementation, not an AMD training backend or a claim of bit-identical
+results to CUDA. GPU transfers between DirectML and OpenGL pass through host memory.
+
+Hardware checks and real-model smoke tests:
+
+```powershell
+./.venv/Scripts/python.exe -m unittest discover -s tests -v
+./.venv/Scripts/python.exe smoke_amd.py 3d
+./.venv/Scripts/python.exe smoke_amd.py 2d --steps 2
+```
+
+The smoke tests treat reported DirectML CPU operator fallbacks as errors.
+Two diffusion steps only check execution; use the UI's normal step count for quality.
+
+Validated locally on an RX 6600: six GPU integration tests, four-view generation
+at 512x768 with 10 steps (about 12 minutes including loading), and 3D export with
+back projection to GLB/OBJ (about 52 seconds using the bundled example views).
+The generated views were also used to produce and download a GLB/OBJ through the UI.
+These timings depend on available VRAM and other running applications.
+
 ### 1. Prepare environment
 
 Use `python3.9` and then
@@ -39,12 +81,16 @@ If you find mistakes on download, you can download all the reporitory and move t
 
 #### Only Run 2D Stage
 
+For the CUDA environment (on AMD, use `start-amd.ps1` above):
+
 ```bash
 cd 2D_Stage
 python webui.py
 ```
 
 #### Only Run 3D Stage
+
+For the CUDA environment (on AMD, use `start-amd.ps1` above):
 
 ```bash
 cd 3D_Stage

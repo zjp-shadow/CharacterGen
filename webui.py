@@ -1,3 +1,5 @@
+import os
+os.environ.setdefault("HF_HOME", "D:/Codex/models/CharacterGen/huggingface" if os.name == "nt" else os.path.expanduser("~/.cache/huggingface"))
 import gradio as gr
 from PIL import Image
 import glob
@@ -12,6 +14,7 @@ import numpy as np
 
 import torch
 import torch.utils.checkpoint
+from runtime import get_device, is_directml, autocast, DirectMLAttnProcessor
 
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
@@ -52,32 +55,14 @@ import pymeshlab
 
 from huggingface_hub import hf_hub_download, list_repo_files
 
-#7-23-2024 Changed to allow GPU with compute < 8
-device_capability = -1
+MODEL_ROOT = os.environ.get("CHARACTERGEN_MODEL_DIR", ".")
 
-#bfloat Support is typically 8 or higher.
-def check_bfloat16_support():
-   # Check if bfloat16 is supported
-   device_capability = torch.cuda.get_device_capability()
 
-   if device_capability[0] >= 8:
-      print("CUDA device capability is above 8, using bfloat16.")
-      return torch.bfloat16
-   else:
-      print("CUDA device capability is below 8, using float 32.")
-      return torch.float32
-
-#7-23-2024 Changed to allow GPU with compute < 8
-data_type_float = check_bfloat16_support()
-
-repo_id = "zjpshadow/CharacterGen"
-all_files = list_repo_files(repo_id, revision="main")
-
-for file in all_files:
-    if os.path.exists(file):
-        continue
-    if file.startswith("2D_Stage") or file.startswith("3D_Stage"):
-        hf_hub_download(repo_id, file, local_dir=".")
+def download_models():
+    from huggingface_hub import snapshot_download
+    snapshot_download("zjpshadow/CharacterGen", local_dir=MODEL_ROOT,
+                      allow_patterns=["2D_Stage/models/checkpoint/pytorch_model*.bin",
+                                      "2D_Stage/models/image_encoder/*", "3D_Stage/models/*"])
 
 class rm_bg_api:
 
@@ -89,9 +74,14 @@ class rm_bg_api:
         if not force_cpu and "CUDAExecutionProvider" in rt.get_available_providers():
             providers = ["CUDAExecutionProvider"]
 
-        self.session_infer = rt.InferenceSession(
-            session_infer_path, providers=providers,
-        )
+        options = rt.SessionOptions()
+        if not force_cpu and is_directml(get_device()):
+            if "DmlExecutionProvider" not in rt.get_available_providers():
+                raise RuntimeError("Install onnxruntime-directml for AMD background removal.")
+            providers = [("DmlExecutionProvider", {"device_id": int(os.environ.get("CHARACTERGEN_GPU", "0"))})]
+            options.enable_mem_pattern = False
+            options.execution_mode = rt.ExecutionMode.ORT_SEQUENTIAL
+        self.session_infer = rt.InferenceSession(session_infer_path, sess_options=options, providers=providers)
 
     def remove_background(
         self,
@@ -189,38 +179,41 @@ class Inference2D_API:
             use_pose_guider=False,
             use_shifted_noise=False,
             use_noise=True,
-            device="cuda"
+            device=None
         ):
+        device = get_device() if device is None else torch.device(device)
+        self.device = device
         self.validation = validation
         self.use_noise = use_noise
         self.use_shifted_noise = use_shifted_noise
         self.unet_condition_type = unet_condition_type
-        image_encoder_path = image_encoder_path.replace("./", "./2D_Stage/")
-        ckpt_dir = ckpt_dir.replace("./", "./2D_Stage/")
+        image_encoder_path = os.path.join(MODEL_ROOT, "2D_Stage", image_encoder_path)
+        ckpt_dir = os.path.join(MODEL_ROOT, "2D_Stage", ckpt_dir)
 
         self.tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
         text_encoder = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
         image_encoder = CLIPVisionModelWithProjection.from_pretrained(image_encoder_path)
         feature_extractor = CLIPImageProcessor()
         vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
-        unet = UNetMV2DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet", local_crossattn=local_crossattn, **unet_from_pretrained_kwargs)
-        ref_unet = UNetMV2DRefModel.from_pretrained_2d(pretrained_model_path, subfolder="unet", local_crossattn=local_crossattn, **unet_from_pretrained_kwargs)
+        unet = UNetMV2DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet", local_crossattn=local_crossattn, config_only=is_directml(device), **unet_from_pretrained_kwargs)
+        ref_unet = UNetMV2DRefModel.from_pretrained_2d(pretrained_model_path, subfolder="unet", local_crossattn=local_crossattn, config_only=is_directml(device), **unet_from_pretrained_kwargs)
         if use_pose_guider:
-            pose_guider = PoseGuider(noise_latent_channels=4).to("cuda")
+            pose_guider = PoseGuider(noise_latent_channels=4)
         else:
             pose_guider = None
 
-        unet_params = torch.load(os.path.join(ckpt_dir, "pytorch_model.bin"), map_location="cpu")
+        unet_params = torch.load(os.path.join(ckpt_dir, "pytorch_model.bin"), map_location="cpu", mmap=True, weights_only=True)
         if use_pose_guider:
-            pose_guider_params = torch.load(os.path.join(ckpt_dir, "pytorch_model_1.bin"), map_location="cpu")
-            ref_unet_params = torch.load(os.path.join(ckpt_dir, "pytorch_model_2.bin"), map_location="cpu")
-            pose_guider.load_state_dict(pose_guider_params)
+            pose_guider_params = torch.load(os.path.join(ckpt_dir, "pytorch_model_1.bin"), map_location="cpu", mmap=True, weights_only=True)
+            ref_unet_params = torch.load(os.path.join(ckpt_dir, "pytorch_model_2.bin"), map_location="cpu", mmap=True, weights_only=True)
+            pose_guider.load_state_dict(pose_guider_params, assign=True)
         else:
-            ref_unet_params = torch.load(os.path.join(ckpt_dir, "pytorch_model_1.bin"), map_location="cpu")
-        unet.load_state_dict(unet_params)
-        ref_unet.load_state_dict(ref_unet_params)
+            ref_unet_params = torch.load(os.path.join(ckpt_dir, "pytorch_model_1.bin"), map_location="cpu", mmap=True, weights_only=True)
+        unet.load_state_dict(unet_params, assign=True)
+        ref_unet.load_state_dict(ref_unet_params, assign=True)
 
         weight_dtype = torch.float16
+        self.weight_dtype = weight_dtype
 
         text_encoder.to(device, dtype=weight_dtype)
         image_encoder.to(device, dtype=weight_dtype)
@@ -231,6 +224,8 @@ class Inference2D_API:
         vae.requires_grad_(False)
         unet.requires_grad_(False)
         ref_unet.requires_grad_(False)
+        for model in (text_encoder, image_encoder, vae, ref_unet, unet):
+            model.eval()
 
         noise_scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
         self.validation_pipeline = TuneAVideoPipeline(
@@ -238,13 +233,20 @@ class Inference2D_API:
             scheduler=noise_scheduler
         )
         self.validation_pipeline.enable_vae_slicing()
+        if is_directml(device):
+            self.validation_pipeline.vae.enable_tiling()
+            vae.set_attn_processor(DirectMLAttnProcessor())
         self.validation_pipeline.set_progress_bar_config(disable=True)
-        self.generator = torch.Generator(device=device)
+        self.generator = torch.Generator(device="cpu" if is_directml(device) else device)
 
     @torch.no_grad()
     def inference(self, input_image, val_width, val_height, 
                     use_shifted_noise=False, crop=False, seed=100, timestep=20):
+        if is_directml(self.device):
+            for name in ("text_encoder", "image_encoder", "vae", "ref_unet", "unet"):
+                getattr(self.validation_pipeline, name).to(self.device)
         set_seed(seed)
+        self.generator.manual_seed(seed if seed >= 0 else torch.initial_seed())
         totensor = transforms.ToTensor()
 
         metas = json.load(open("./2D_Stage/material/pose.json", "r"))
@@ -252,7 +254,7 @@ class Inference2D_API:
         pose_images = []
         input_path = "./2D_Stage/material"
         for lm in metas:
-            cameras.append(torch.tensor(np.array(lm[0]).reshape(4, 4).transpose(1,0)[:3, :4]).reshape(-1))
+            cameras.append(torch.tensor(np.array(lm[0]).reshape(4, 4).transpose(1,0)[:3, :4], dtype=torch.float32).reshape(-1))
             if not crop:
                 pose_images.append(totensor(np.asarray(Image.open(os.path.join(input_path, lm[1])).resize(
                     (val_height, val_width), resample=PIL.Image.BICUBIC)).astype(np.float32) / 255.))
@@ -260,8 +262,8 @@ class Inference2D_API:
                 pose_image = Image.open(os.path.join(input_path, lm[1]))
                 crop_area = (128, 0, 640, 768)
                 pose_images.append(totensor(np.array(pose_image.crop(crop_area)).astype(np.float32)) / 255.)
-        camera_matrixs = torch.stack(cameras).unsqueeze(0).to("cuda")
-        pose_imgs_in = torch.stack(pose_images).to("cuda")
+        camera_matrixs = torch.stack(cameras).unsqueeze(0).to(self.device)
+        pose_imgs_in = torch.stack(pose_images).to(self.device)
         prompts = "high quality, best quality"
         prompt_ids = self.tokenizer(
             prompts, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
@@ -269,12 +271,12 @@ class Inference2D_API:
 
         # (B*Nv, 3, H, W)
         B = 1
-        weight_dtype = data_type_float #7-23-2024 Changed to allow GPU with compute < 8
+        weight_dtype = self.weight_dtype
         imgs_in = process_image(input_image, totensor)
         imgs_in = rearrange(imgs_in.unsqueeze(0).unsqueeze(0), "B Nv C H W -> (B Nv) C H W")
                 
-        with torch.autocast("cuda", dtype=weight_dtype):
-            imgs_in = imgs_in.to("cuda")
+        with autocast(self.device, weight_dtype):
+            imgs_in = imgs_in.to(self.device)
             # B*Nv images
             out = self.validation_pipeline(prompt=prompts, image=imgs_in.to(weight_dtype), generator=self.generator, 
                                         num_inference_steps=timestep,
@@ -285,13 +287,19 @@ class Inference2D_API:
             out = rearrange(out, "B C f H W -> (B f) C H W", f=self.validation.video_length)
 
         image_outputs = []
+        if not torch.isfinite(out).all():
+            raise RuntimeError("The generated views contain non-finite values; no images were exported.")
         for bs in range(4):
             img_buf = io.BytesIO()
             save_image(out[bs], img_buf, format='PNG')
             img_buf.seek(0)
             img = Image.open(img_buf)
             image_outputs.append(img)
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if is_directml(self.device):
+            for name in ("text_encoder", "image_encoder", "vae", "ref_unet", "unet"):
+                getattr(self.validation_pipeline, name).to("cpu")
         return image_outputs 
 
 def traverse(path, back_proj, smooth_iter):
@@ -326,22 +334,39 @@ def traverse(path, back_proj, smooth_iter):
 
 class Inference3D_API:
 
-    def __init__(self, device="cuda"):
+    def __init__(self, device=None):
         self.cfg = load_config("3D_Stage/configs/infer.yaml", makedirs=False)
         print("Loading system")
-        self.device = device
-        self.cfg.system.weights = self.cfg.system.weights.replace("./", "./3D_Stage/")
+        self.device = get_device() if device is None else torch.device(device)
+        self.cfg.system.weights = os.path.join(MODEL_ROOT, "3D_Stage", self.cfg.system.weights)
         self.cfg.system.image_tokenizer.pretrained_model_name_or_path = \
-            self.cfg.system.image_tokenizer.pretrained_model_name_or_path.replace("./", "./3D_Stage/")
+            os.path.join(MODEL_ROOT, "3D_Stage", self.cfg.system.image_tokenizer.pretrained_model_name_or_path)
         self.cfg.system.renderer.tet_dir = self.cfg.system.renderer.tet_dir.replace("./", "./3D_Stage/")
         self.cfg.system.exporter.output_path = self.cfg.system.exporter.output_path.replace("./", "./3D_Stage/")
+        if is_directml(self.device):
+            self.cfg.system.image_tokenizer.enable_memory_efficient_attention = False
+            self.cfg.system.backbone.enable_memory_efficient_attention = False
+            self.cfg.system.image_tokenizer.enable_gradient_checkpointing = False
+            self.cfg.system.backbone.gradient_checkpointing = False
+            self.cfg.system.renderer.eval_chunk_size = 8192
+            self.cfg.system.decoder.chunk_size = 8192
         self.system = lrm.find(self.cfg.system_cls)(self.cfg.system).to(self.device)
+        if is_directml(self.device):
+            for name in ("image_tokenizer", "camera_embedder", "tokenizer", "backbone", "post_processor"):
+                getattr(self.system, name).half()
+            for module in self.system.modules():
+                if hasattr(module, "set_processor"):
+                    module.set_processor(DirectMLAttnProcessor())
         self.system.eval()
 
     def process_images(self, img_input0, img_input1, img_input2, img_input3, back_proj, smooth_iter):
+        dtype = torch.float16 if is_directml(self.device) else torch.float32
+        if is_directml(self.device):
+            for name in ("image_tokenizer", "camera_embedder", "tokenizer", "backbone", "post_processor"):
+                getattr(self.system, name).to(self.device)
         meta = json.load(open("./3D_Stage/material/meta.json"))
         c2w_cond = [np.array(loc["transform_matrix"]) for loc in meta["locations"]]
-        c2w_cond = torch.from_numpy(np.stack(c2w_cond, axis=0)).float()[None].to(self.device)
+        c2w_cond = torch.from_numpy(np.stack(c2w_cond, axis=0))[None].to(device=self.device, dtype=dtype)
         # save four images
         
         rgb_cond = []
@@ -366,13 +391,20 @@ class Inference3D_API:
             rgb_cond.append(rgb)
         assert len(rgb_cond) == 4, "Please provide 4 images"
 
-        rgb_cond = torch.from_numpy(np.stack(rgb_cond, axis=0)).float()[None].to(self.device)
+        rgb_cond = torch.from_numpy(np.stack(rgb_cond, axis=0))[None].to(device=self.device, dtype=dtype)
 
         with torch.no_grad():
             scene_codes = self.system({"rgb_cond": rgb_cond, "c2w_cond": c2w_cond})
+            if not torch.isfinite(scene_codes).all().cpu():
+                raise RuntimeError("The 3D network produced non-finite values.")
+            if is_directml(self.device):
+                # Host RAM holds inactive weights; all neural inference remains on the GPU.
+                scene_codes = scene_codes.float()
+                for name in ("image_tokenizer", "camera_embedder", "tokenizer", "backbone", "post_processor"):
+                    getattr(self.system, name).to("cpu")
             exporter_output = self.system.exporter([f"{i:02d}" for i in range(rgb_cond.shape[0])], scene_codes)
 
-        save_dir = os.path.join("./3D_Stage/outputs", datetime.now().strftime("@%Y%m%d-%H%M%S"))
+        save_dir = os.path.join(os.environ.get("CHARACTERGEN_OUTPUT_DIR", "./3D_Stage/outputs"), datetime.now().strftime("@%Y%m%d-%H%M%S"))
         os.makedirs(save_dir, exist_ok=True)
         self.system.set_save_dir(save_dir)
 
@@ -389,7 +421,7 @@ class Inference3D_API:
         gltf = GLTF2().load(f'{save_dir}/output.glb')
         for material in gltf.materials:
             if material.pbrMetallicRoughness:
-                material.pbrMetallicRoughness.baseColorFactor = [1.0, 1.0, 1.0, 100.0]
+                material.pbrMetallicRoughness.baseColorFactor = [1.0, 1.0, 1.0, 1.0]
                 material.pbrMetallicRoughness.metallicFactor = 0.0
                 material.pbrMetallicRoughness.roughnessFactor = 1.0
         gltf.save(f'{save_dir}/output.glb')
@@ -401,24 +433,52 @@ def main(
 ):
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="./2D_Stage/configs/infer.yaml", help='Path to a config yaml file.')
-    parser.add_argument("--share", type=str, default="False", help='True/False value for sharing Gradio as a public URL.')
+    parser.add_argument("--share", action="store_true", help='Share Gradio as a public URL.')
+    parser.add_argument("--skip-download", action="store_true", help='Use already downloaded weights.')
     args = parser.parse_args()
 
-    infer2dapi = Inference2D_API(**OmegaConf.load(args.config))
-    infer3dapi = Inference3D_API()
-    remove_api = rm_bg_api()
+    if not args.skip_download:
+        download_models()
+    # Only one generation stage occupies VRAM at a time on the RX 6600.
+    infer2dapi = None
+    infer3dapi = None
+    remove_api = None
 
     def gen4views(image, width, height, seed, timestep, remove_bg):
+        nonlocal infer2dapi, infer3dapi, remove_api
+        if image is None:
+            raise gr.Error("Selecione uma imagem antes de gerar as vistas.")
+        import gc
+        infer3dapi = None
+        gc.collect()
         if remove_bg:
+            if remove_api is None:
+                remove_api = rm_bg_api()
             image = remove_api.remove_background(
                 imgs=[np.array(image)],
                 alpha_min=0.1,
                 alpha_max=0.9,
             )[0]
+        remove_api = None
+        gc.collect()
+        if infer2dapi is None:
+            infer2dapi = Inference2D_API(**OmegaConf.load(args.config))
+        images = infer2dapi.inference(
+            image, int(width), int(height), crop=True, seed=int(seed), timestep=int(timestep)
+        )
+        remove_api = rm_bg_api()
         return remove_api.remove_background(
-            imgs=infer2dapi.inference(
-            image, width, height, crop=True, seed=seed, timestep=timestep
-            ), alpha_min=0.2, alpha_max=0.9)
+            imgs=images, alpha_min=0.2, alpha_max=0.9)
+
+    def gen3d(*images_and_options):
+        nonlocal infer2dapi, infer3dapi, remove_api
+        import gc
+        infer2dapi = None
+        remove_api = None
+        gc.collect()
+        if infer3dapi is None:
+            infer3dapi = Inference3D_API()
+        return infer3dapi.process_images(*images_and_options)
 
     with gr.Blocks() as demo:
         gr.Markdown("# [SIGGRAPH'24] CharacterGen: Efficient 3D Character Generation from Single Images with Multi-View Pose Calibration")
@@ -431,9 +491,9 @@ def main(
                     inputs=[img_input]
                 )
                 with gr.Row():
-                    width_input = gr.Number(label="Width", value=512)
-                    height_input = gr.Number(label="Height", value=768)
-                    seed_input = gr.Number(label="Seed", value=2333)
+                    width_input = gr.Number(label="Width", value=512, precision=0)
+                    height_input = gr.Number(label="Height", value=768, precision=0)
+                    seed_input = gr.Number(label="Seed", value=2333, precision=0)
                     remove_bg = gr.Checkbox(label="Remove Background (with algorithm)", value=True)
             with gr.Column(variant="panel"):
                 timestep = gr.Slider(minimum=10, maximum=70, step=1, value=40, label="Timesteps")
@@ -460,14 +520,17 @@ def main(
         button1.click(
             fn=gen4views,
             inputs=[img_input, width_input, height_input, seed_input, timestep, remove_bg],
-            outputs=[img_input2, img_input0, img_input3, img_input1]
+            outputs=[img_input2, img_input0, img_input3, img_input1], concurrency_id="generation"
         )
         button2.click(
-            infer3dapi.process_images,
+            gen3d,
             inputs=[img_input0, img_input1, img_input2, img_input3, back_proj, smooth_iter],
-            outputs=[output_dir, output_model_obj, output_model_glb]
+            outputs=[output_dir, output_model_obj, output_model_glb], concurrency_id="generation"
         )
-    demo.launch(server_name="0.0.0.0", share={args.share})
+    demo.queue(default_concurrency_limit=1).launch(
+        server_name="127.0.0.1", share=args.share,
+        allowed_paths=[os.path.abspath(os.environ.get("CHARACTERGEN_OUTPUT_DIR", "./3D_Stage/outputs"))],
+    )
 
 if __name__ == "__main__":
     main()

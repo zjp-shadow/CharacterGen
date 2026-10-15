@@ -1,4 +1,4 @@
-pretrained_model_path: "stabilityai/stable-diffusion-2-1"
+pretrained_model_path: "sd2-community/stable-diffusion-2-1"
 image_encoder_path: "./models/image_encoder"
 ckpt_dir: "./models/checkpoint"
 

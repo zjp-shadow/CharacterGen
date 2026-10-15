@@ -169,7 +169,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
         # # image encoding
         clip_image_mean = torch.as_tensor(self.feature_extractor.image_mean)[:,None,None].to(device, dtype=torch.float32)
         clip_image_std = torch.as_tensor(self.feature_extractor.image_std)[:,None,None].to(device, dtype=torch.float32)
-        imgs_in_proc = TF.resize(image_pil, (self.feature_extractor.crop_size['height'], self.feature_extractor.crop_size['width']), interpolation=InterpolationMode.BICUBIC)
+        imgs_in_proc = TF.resize(image_pil, (self.feature_extractor.crop_size['height'], self.feature_extractor.crop_size['width']), interpolation=InterpolationMode.BICUBIC, antialias=device.type != "privateuseone")
         # do the normalization in float32 to preserve precision
         imgs_in_proc = ((imgs_in_proc.float() - clip_image_mean) / clip_image_std).to(dtype)        
         if img_proj is None:
@@ -203,7 +203,11 @@ class TuneAVideoPipeline(DiffusionPipeline):
         
         # image_pt = torch.stack([TF.to_tensor(img) for img in image_pil], dim=0).to(device)
         # image_pil = image_pil * 2.0 - 1.0
+        if device.type == "privateuseone":
+            self.image_encoder.to("cpu")
         image_latents = self.vae.encode(image_pil* 2.0 - 1.0).latent_dist.mode() * self.vae.config.scaling_factor
+        if device.type == "privateuseone":
+            self.vae.to("cpu")
 
         # Note: repeat differently from official pipelines
         # B1B2B3B4 -> B1B2B3B4B1B2B3B4        
@@ -301,9 +305,15 @@ class TuneAVideoPipeline(DiffusionPipeline):
             # to avoid doing two forward passes
             text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
 
+        if device.type == "privateuseone":
+            self.text_encoder.to("cpu")
         return text_embeddings
 
     def decode_latents(self, latents):
+        if latents.device.type == "privateuseone":
+            self.unet.to("cpu")
+            self.ref_unet.to("cpu")
+            self.vae.to(latents.device)
         video_length = latents.shape[2]
         latents = 1 / 0.18215 * latents
         latents = rearrange(latents, "b c f h w -> (b f) c h w")
@@ -355,7 +365,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
             )
 
         if latents is None:
-            rand_device = "cpu" if device.type == "mps" else device
+            rand_device = "cpu" if device.type in ("mps", "privateuseone") else device
 
             if isinstance(generator, list):
                 shape = (1,) + shape[1:]
@@ -443,7 +453,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
         )
 
         # Prepare timesteps
-        self.scheduler.set_timesteps(num_inference_steps, device=device)
+        self.scheduler.set_timesteps(num_inference_steps, device="cpu" if device.type == "privateuseone" else device)
         timesteps = self.scheduler.timesteps
 
         # Prepare latent variables
@@ -498,12 +508,19 @@ class TuneAVideoPipeline(DiffusionPipeline):
                 # ref text condition
                 ref_dict = {}
                 if self.ref_unet is not None:
+                    if device.type == "privateuseone":
+                        # Keep one UNet resident to avoid paging the RX 6600's VRAM.
+                        self.unet.to("cpu")
+                        self.ref_unet.to(device)
                     noise_pred_cond = self.ref_unet(
-                        cond_latent_model_input,    #torch.Size([64, 4, 1, 32, 32])
+                        cond_latent_model_input.to(self.ref_unet.dtype),    #torch.Size([64, 4, 1, 32, 32])
                         t,             #torch.Size([32])
-                        encoder_hidden_states=text_embeddings.to(torch.float32), #torch.Size([64, 77, 768])
+                        encoder_hidden_states=text_embeddings.to(self.ref_unet.dtype), #torch.Size([64, 77, 768])
                         cross_attention_kwargs=dict(mode="w", ref_dict=ref_dict)
                     ).sample.to(dtype=latents_dtype)
+                    if device.type == "privateuseone":
+                        self.ref_unet.to("cpu")
+                        self.unet.to(device)
                 
                 # if torch.isnan(noise_pred_cond).any():
                 #     ipdb.set_trace()
@@ -526,19 +543,19 @@ class TuneAVideoPipeline(DiffusionPipeline):
                 
                 if self.ref_unet is not None:
                     noise_pred = self.unet(
-                        latent_model_input.to(torch.float32),         #torch.Size([64, 4, 4, 32, 32])
+                        latent_model_input.to(self.unet.dtype),         #torch.Size([64, 4, 4, 32, 32])
                         t,
-                        encoder_hidden_states=encoder_hidden_states_unet_cond.to(torch.float32), 
-                        camera_matrixs=camera_matrixs.to(torch.float32),      #torch.Size([64, 4, 12])
+                        encoder_hidden_states=encoder_hidden_states_unet_cond.to(self.unet.dtype),
+                        camera_matrixs=camera_matrixs.to(self.unet.dtype),      #torch.Size([64, 4, 12])
                         cross_attention_kwargs=dict(mode="r", ref_dict=ref_dict, is_cfg_guidance=do_classifier_free_guidance)
                         # cross_attention_kwargs=dict(mode="n", ref_dict=ref_dict, is_cfg_guidance=do_classifier_free_guidance)
                     ).sample.to(dtype=latents_dtype)
                 else:
                     noise_pred = self.unet(
-                        latent_model_input.to(torch.float32),         #torch.Size([64, 4, 4, 32, 32])
+                        latent_model_input.to(self.unet.dtype),         #torch.Size([64, 4, 4, 32, 32])
                         t,
-                        encoder_hidden_states=encoder_hidden_states_unet_cond.to(torch.float32), 
-                        camera_matrixs=camera_matrixs.to(torch.float32),      #torch.Size([64, 4, 12])
+                        encoder_hidden_states=encoder_hidden_states_unet_cond.to(self.unet.dtype),
+                        camera_matrixs=camera_matrixs.to(self.unet.dtype),      #torch.Size([64, 4, 12])
                         # cross_attention_kwargs=dict(mode="r", ref_dict=ref_dict, is_cfg_guidance=do_classifier_free_guidance)
                         cross_attention_kwargs=dict(mode="n", ref_dict=ref_dict, is_cfg_guidance=do_classifier_free_guidance)
                     ).sample.to(dtype=latents_dtype)
